@@ -101,8 +101,8 @@ class ResRobotClient:
             time.sleep(self.delay - elapsed)
         self.last_request = time.time()
 
-    def lookup_stop(self, query: str) -> Optional[dict]:
-        """Search for a stop by name. Returns first Stockholm result or None."""
+    def lookup_stop(self, query: str, require_stockholm: bool = True) -> Optional[dict]:
+        """Search for a stop by name. Returns first Stockholm-area result or None."""
         self._rate_limit()
         encoded = urllib.parse.quote(query)
         url = f"{self.BASE_URL}/location.name?input={encoded}&format=json&accessId={self.api_key}"
@@ -111,21 +111,44 @@ class ResRobotClient:
             data = http_get(url)
             locations = data.get("stopLocationOrCoordLocation", [])
 
-            # Prefer Stockholm results
             for loc in locations:
                 stop = loc.get("StopLocation", {})
-                name = stop.get("name", "")
-                if "Stockholm" in name or "stockholm" in name.lower():
+                if self._is_stockholm_area(stop):
                     return stop
 
-            # Fall back to first result
-            if locations:
+            # If not requiring Stockholm, fall back to first result
+            if not require_stockholm and locations:
                 return locations[0].get("StopLocation")
 
             return None
         except Exception as e:
             print(f"  Warning: Stop lookup failed for '{query}': {e}", file=sys.stderr)
             return None
+
+    def _is_stockholm_area(self, stop: dict) -> bool:
+        """Check if a stop is in the Stockholm metropolitan area."""
+        if not stop:
+            return False
+
+        # Check by name (common municipality suffixes)
+        name = stop.get("name", "")
+        stockholm_indicators = [
+            "Stockholm", "Nacka", "Solna", "Sundbyberg", "Huddinge",
+            "Täby", "Danderyd", "Lidingö", "Sollentuna", "Järfälla",
+            "Botkyrka", "Haninge", "Tyresö", "Värmdö", "Österåker",
+            "Sigtuna", "Upplands", "Södertälje", "Nynäshamn", "Norrtälje"
+        ]
+        for indicator in stockholm_indicators:
+            if indicator in name:
+                return True
+
+        # Check by coordinates (Stockholm area: lat 59.1-59.6, lon 17.5-18.5)
+        lat = stop.get("lat", 0)
+        lon = stop.get("lon", 0)
+        if 59.1 <= lat <= 59.6 and 17.5 <= lon <= 18.5:
+            return True
+
+        return False
 
     def get_travel_time(self, origin_id: str, dest_id: str) -> Optional[int]:
         """Get travel time in minutes between two stops."""
@@ -207,19 +230,25 @@ def find_school_stop(
     resrobot: ResRobotClient, school_name: str, location: str
 ) -> Optional[dict]:
     """Try multiple strategies to find a stop near a school."""
-    # Strategy 1: Search for school name directly
+    # Strategy 1: Search for district/location first (most reliable)
+    if location:
+        stop = resrobot.lookup_stop(f"{location} Stockholm")
+        if stop:
+            return stop
+
+    # Strategy 2: Search for school name directly
     stop = resrobot.lookup_stop(school_name)
     if stop:
         return stop
 
-    # Strategy 2: Search for school name + Stockholm
+    # Strategy 3: Search for school name + Stockholm
     stop = resrobot.lookup_stop(f"{school_name} Stockholm")
     if stop:
         return stop
 
-    # Strategy 3: Search for district/location
+    # Strategy 4: Try just the location without "Stockholm"
     if location:
-        stop = resrobot.lookup_stop(f"{location} Stockholm")
+        stop = resrobot.lookup_stop(location)
         if stop:
             return stop
 
