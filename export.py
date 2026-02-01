@@ -226,6 +226,40 @@ class EdniaClient:
             return None
 
 
+# Schools to exclude from export
+EXCLUDED_NAME_PATTERNS = [
+    "Praktiska",
+    "Yrkesgymnasiet",
+]
+
+EXCLUDED_SCHOOLS = [
+    "Sjömansskolan",
+    "Lilla Akademiens musikgymnasium",
+    "Rytmus Stockholm",
+    "Elektrikergymnasiet",
+    "Internationella Hotell- och Restaurangskolan",
+    "Djurgymnasiet Stockholm",
+    "Teknik & Servicegymnasiet",
+    "Kristofferskolans Gymnasium",
+    "Kulturama gymnasium",
+    "Ingridskolan i Bergshamra",
+]
+
+
+def should_exclude_school(school_name: str) -> bool:
+    """Check if a school should be excluded from export."""
+    # Check exact matches
+    if school_name in EXCLUDED_SCHOOLS:
+        return True
+
+    # Check patterns
+    for pattern in EXCLUDED_NAME_PATTERNS:
+        if pattern in school_name:
+            return True
+
+    return False
+
+
 def find_school_stop(
     resrobot: ResRobotClient, school_name: str, location: str
 ) -> Optional[dict]:
@@ -277,10 +311,15 @@ def export_schools(config: Config):
 
     # Phase 2: Fetch all schools
     print("\n[Phase 2] Fetching schools from Ednia...")
-    schools = ednia.get_schools()
+    all_schools = ednia.get_schools()
+
+    # Filter out excluded schools
+    schools = [s for s in all_schools if not should_exclude_school(s["name"])]
+    excluded_count = len(all_schools) - len(schools)
+    print(f"  Found {len(all_schools)} schools, excluded {excluded_count}, processing {len(schools)}")
+
     if config.school_limit:
         schools = schools[: config.school_limit]
-    print(f"  Found {len(schools)} schools")
 
     # Phase 3: Fetch program details and travel times
     print("\n[Phase 3] Fetching program details and travel times...")
